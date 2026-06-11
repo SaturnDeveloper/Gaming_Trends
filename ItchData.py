@@ -4,16 +4,16 @@ import time
 
 
 # ---------------------------------------------------------
-# 1) TOPSELLER SCRAPEN
+# 1) TOPSELLER SCRAPEN (richtige Spiel-URLs + Limit)
 # ---------------------------------------------------------
 
 def scrape_itch_topsellers(limit=None):
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
+        page = browser.new_page(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
 
         print("Lade itch.io Topseller...")
-        page.goto("https://itch.io/games/top-sellers")
+        page.goto("https://itch.io/games/top-sellers", wait_until="domcontentloaded")
         page.wait_for_selector(".game_cell")
 
         last_count = 0
@@ -40,13 +40,16 @@ def scrape_itch_topsellers(limit=None):
             title_el = item.query_selector(".game_title")
             author_el = item.query_selector(".game_author")
             price_el = item.query_selector(".price_value")
-            url_el = item.query_selector("a")
+
+            # Spiel-Link (nicht Dev-Profil)
+            url_el = item.query_selector("a.title, a.game_link")
+            game_url = url_el.get_attribute("href") if url_el else None
 
             results.append({
                 "name": title_el.inner_text().strip() if title_el else None,
                 "author": author_el.inner_text().strip() if author_el else None,
                 "price": price_el.inner_text().strip() if price_el else "Free",
-                "url": url_el.get_attribute("href") if url_el else None
+                "url": game_url
             })
 
         browser.close()
@@ -54,14 +57,14 @@ def scrape_itch_topsellers(limit=None):
 
 
 # ---------------------------------------------------------
-# 2) DETAILSEITE SCRAPEN
+# 2) DETAILSEITE SCRAPEN (HTML, inkl. GENRE)
 # ---------------------------------------------------------
 
-def scrape_itch_game_page(browser, url):
-    page = browser.new_page()
+def scrape_itch_game_page_html(browser, url):
+    page = browser.new_page(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
 
     try:
-        page.goto(url, timeout=60000, wait_until="domcontentloaded")
+        page.goto(url, timeout=60000, wait_until="networkidle")
     except:
         print("Fehler beim Laden:", url)
         page.close()
@@ -69,24 +72,48 @@ def scrape_itch_game_page(browser, url):
             "tags": [],
             "description": None,
             "platforms": [],
-            "release_date": None
+            "release_date": None,
+            "genre": None
         }
 
-    # Tags
-    tag_elements = page.query_selector_all(".game_tags a")
+    page.wait_for_timeout(800)
+
+    # TAGS
+    tag_elements = page.query_selector_all(".game_tags .tag, .game_tags_widget .tag")
     tags = [t.inner_text().strip() for t in tag_elements]
 
-    # Beschreibung
-    desc_el = page.query_selector(".formatted_description")
+    # BESCHREIBUNG
+    desc_el = page.query_selector(
+        ".formatted_description, .game_description, .user_formatted, .markdown"
+    )
     description = desc_el.inner_text().strip() if desc_el else None
 
-    # Plattformen
-    platform_elements = page.query_selector_all(".game_platform")
-    platforms = [p.inner_text().strip() for p in platform_elements]
+    # PLATTFORMEN
+    platform_elements = page.query_selector_all(".buy_row .icon")
+    platforms = []
+    for p in platform_elements:
+        title = p.get_attribute("title")
+        aria = p.get_attribute("aria-label")
+        if title:
+            platforms.append(title.lower())
+        elif aria:
+            platforms.append(aria.lower())
 
-    # Release Date
-    release_el = page.query_selector(".game_info_panel_widget .date")
+    # RELEASE DATE
+    release_el = page.query_selector(
+        ".game_info_panel_widget .date, .date_label, .info_row .date"
+    )
     release_date = release_el.inner_text().strip() if release_el else None
+
+    # GENRE (richtiger Block!)
+    genre = None
+    meta_rows = page.query_selector_all(".game_metadata .meta_row")
+    for row in meta_rows:
+        label = row.query_selector(".meta_label")
+        value = row.query_selector(".meta_value")
+        if label and value and label.inner_text().strip().lower() == "genre":
+            genre = value.inner_text().strip()
+            break
 
     page.close()
 
@@ -94,42 +121,47 @@ def scrape_itch_game_page(browser, url):
         "tags": tags,
         "description": description,
         "platforms": platforms,
-        "release_date": release_date
+        "release_date": release_date,
+        "genre": genre
     }
 
 
 # ---------------------------------------------------------
-# 3) HAUPTPROGRAMM
+# 3) MAIN – ALLES KOMBINIEREN & SPEICHERN
 # ---------------------------------------------------------
 
-if __name__ == "__main__":
+def run(limit=10):
+    print(f"Starte Scrape mit Limit = {limit}")
 
-    # 1. Topseller scrapen
-    topseller_data = scrape_itch_topsellers()
+    # 1. Topseller
+    topseller_data = scrape_itch_topsellers(limit=limit)
 
     with open("itch_topsellers.json", "w", encoding="utf-8") as f:
         json.dump(topseller_data, f, indent=4, ensure_ascii=False)
 
     print("Itch Topseller gespeichert:", len(topseller_data))
 
-    # 2. Detaildaten scrapen
+    # 2. Detaildaten (HTML)
     final_data = []
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
 
         for entry in topseller_data:
-            print("Scrape:", entry["name"])
-            details = scrape_itch_game_page(browser, entry["url"])
-
+            print("Scrape Details:", entry["name"], "->", entry["url"])
+            details = scrape_itch_game_page_html(browser, entry["url"])
             combined = {**entry, **details}
             final_data.append(combined)
 
         browser.close()
 
-    # 3. Finale Datei speichern
+    # 3. Finale Datei
     with open("itch_topsellers_full.json", "w", encoding="utf-8") as f:
         json.dump(final_data, f, indent=4, ensure_ascii=False)
 
     print("FERTIG – finale JSON erstellt.")
     print("Einträge:", len(final_data))
+
+
+if __name__ == "__main__":
+    run(limit=5)
