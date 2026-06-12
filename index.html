@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
     <meta charset="UTF-8">
-    <title>Steam Trends Dashboard</title>
+    <title>Steam Trends</title>
 
     <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts-wordcloud@2/dist/echarts-wordcloud.min.js"></script>
@@ -12,140 +12,212 @@
             background: #111;
             color: #eee;
             font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+        }
+        h1, h2 {
+            margin: 10px 0;
+        }
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 20px;
+            align-items: center;
+        }
+        .controls label {
+            margin-right: 5px;
         }
         .chart {
             width: 100%;
-            height: 420px;
-            margin-bottom: 40px;
+            height: 380px;
+            margin-bottom: 30px;
             border: 1px solid #333;
+        }
+        .row {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        .half {
+            flex: 1 1 48%;
+            min-width: 320px;
         }
     </style>
 </head>
 <body>
 
-<h1>Steam Trends Dashboard</h1>
+<h1>Steam Trends</h1>
 
-<div id="genre_total" class="chart"></div>
+<div class="controls">
+    <div>
+        <label for="genreSelect">Genre Trend:</label>
+        <select id="genreSelect"></select>
+    </div>
+    <div>
+        <label for="yearSelect">Year:</label>
+        <select id="yearSelect"></select>
+    </div>
+    <button id="themeToggle">Change theme</button>
+</div>
+
+<div class="row">
+    <div class="half"><div id="genre_total" class="chart"></div></div>
+    <div class="half"><div id="genre_trend" class="chart"></div></div>
+</div>
+
+<div class="row">
+    <div class="half"><div id="review_percent" class="chart"></div></div>
+    <div class="half"><div id="review_count" class="chart"></div></div>
+</div>
+
+<div class="row">
+    <div class="half"><div id="genre_avg" class="chart"></div></div>
+    <div class="half"><div id="ranking" class="chart"></div></div>
+</div>
+
+<div class="row">
+    <div class="half"><div id="tags_cloud" class="chart"></div></div>
+    <div class="half"><div id="tags_bar" class="chart"></div></div>
+</div>
+
 <div id="genre_years" class="chart"></div>
-<div id="review_percent" class="chart"></div>
-<div id="review_count" class="chart"></div>
-<div id="genre_avg" class="chart"></div>
-<div id="tags_cloud" class="chart"></div>
-<div id="tags_bar" class="chart"></div>
 <div id="genre_heatmap" class="chart"></div>
+<div id="timeline" class="chart"></div>
+<div id="scatter" class="chart"></div>
 
 <script>
 fetch("steam_trends.json")
     .then(r => r.json())
     .then(data => {
-
         console.log("JSON geladen:", data);
 
-        // ============================================================
-        // 1) GENRE TOTAL (BAR)
-        // ============================================================
-        const genreChart = echarts.init(document.getElementById("genre_total"));
+        // Basisdaten
+        const years = Object.keys(data.genre_by_year).sort();
+        const allGenresSet = new Set(Object.keys(data.genre_total));
+        years.forEach(y => {
+            Object.keys(data.genre_by_year[y]).forEach(g => allGenresSet.add(g));
+        });
+        const allGenres = [...allGenresSet];
+
+        // DOM-Elemente
+        const genreSelect = document.getElementById("genreSelect");
+        const yearSelect = document.getElementById("yearSelect");
+        const themeToggle = document.getElementById("themeToggle");
+
+        // Dropdowns füllen
+        allGenres.forEach(g => {
+            const opt = document.createElement("option");
+            opt.value = g;
+            opt.textContent = g;
+            genreSelect.appendChild(opt);
+        });
+        years.forEach(y => {
+            const opt = document.createElement("option");
+            opt.value = y;
+            opt.textContent = y;
+            yearSelect.appendChild(opt);
+        });
+
+        // Charts initialisieren
+        const genreChart      = echarts.init(document.getElementById("genre_total"));
+        const genreTrendChart = echarts.init(document.getElementById("genre_trend"));
+        const reviewPercentChart = echarts.init(document.getElementById("review_percent"));
+        const reviewCountChart   = echarts.init(document.getElementById("review_count"));
+        const genreAvgChart      = echarts.init(document.getElementById("genre_avg"));
+        const rankingChart       = echarts.init(document.getElementById("ranking"));
+        const tagCloud           = echarts.init(document.getElementById("tags_cloud"));
+        const tagBar             = echarts.init(document.getElementById("tags_bar"));
+        const genreYearChart     = echarts.init(document.getElementById("genre_years"));
+        const heatmap            = echarts.init(document.getElementById("genre_heatmap"));
+        const timelineChart      = echarts.init(document.getElementById("timeline"));
+        const scatterChart       = echarts.init(document.getElementById("scatter"));
+
+        let dark = true;
+        const bgDark = "#111", textDark = "#fff";
+        const bgLight = "#fff", textLight = "#000";
+
+        function currentBg()   { return dark ? bgDark : bgLight; }
+        function currentText() { return dark ? textDark : textLight; }
+
+        // 1) Genre-Verteilung (Gesamt)
         const genres = Object.keys(data.genre_total);
         const genreCounts = Object.values(data.genre_total);
-
         genreChart.setOption({
-            backgroundColor: "#111",
-            title: { text: "Genre-Verteilung (Gesamt)", textStyle: { color: "#fff" } },
+            backgroundColor: currentBg(),
+            title: { text: "Genre Distribution (Overall)", textStyle: { color: currentText() } },
             xAxis: { type: "category", data: genres, axisLabel: { rotate: 45, color: "#ccc" } },
             yAxis: { type: "value", axisLabel: { color: "#ccc" } },
             series: [{ type: "bar", data: genreCounts }]
         });
 
+        // 2) Genre-Trend pro Genre
+        function getGenreTrend(genre) {
+            return years.map(y => (data.genre_by_year[y] && data.genre_by_year[y][genre]) || 0);
+        }
+        function updateGenreTrend(genre) {
+            genreTrendChart.setOption({
+                backgroundColor: currentBg(),
+                title: { text: "Genre Trend: " + genre, textStyle: { color: currentText() } },
+                xAxis: { type: "category", data: years, axisLabel: { color: "#ccc" } },
+                yAxis: { type: "value", axisLabel: { color: "#ccc" } },
+                series: [{ type: "line", data: getGenreTrend(genre), smooth: true }]
+            });
+        }
+        updateGenreTrend(allGenres[0]);
 
-        // ============================================================
-        // 2) GENRES PRO JAHR (STACKED BAR)
-        // ============================================================
-        const genreYearChart = echarts.init(document.getElementById("genre_years"));
-
-        const years = Object.keys(data.genre_by_year).sort();
-        const allGenres = new Set();
-
-        years.forEach(y => {
-            Object.keys(data.genre_by_year[y]).forEach(g => allGenres.add(g));
-        });
-
-        const genreList = [...allGenres];
-
-        const series = genreList.map(g => ({
-            name: g,
-            type: "bar",
-            stack: "total",
-            data: years.map(y => data.genre_by_year[y][g] || 0)
-        }));
-
-        genreYearChart.setOption({
-            backgroundColor: "#111",
-            title: { text: "Genres pro Jahr (Stacked)", textStyle: { color: "#fff" } },
-            tooltip: { trigger: "axis" },
-            legend: { textStyle: { color: "#fff" } },
-            xAxis: { type: "category", data: years, axisLabel: { color: "#ccc" } },
-            yAxis: { type: "value", axisLabel: { color: "#ccc" } },
-            series
-        });
-
-
-        // ============================================================
-        // 3) REVIEW-PROZENT TREND
-        // ============================================================
-        const reviewPercentChart = echarts.init(document.getElementById("review_percent"));
+        // 3) Review-Prozent-Trend
         const yearsRP = Object.keys(data.review_percent_by_year).sort();
         const reviewAvg = yearsRP.map(y => data.review_percent_by_year[y]);
-
         reviewPercentChart.setOption({
-            backgroundColor: "#111",
-            title: { text: "Durchschnittliche Review-Prozente pro Jahr", textStyle: { color: "#fff" } },
+            backgroundColor: currentBg(),
+            title: { text: "Average Review Percentage per Year", textStyle: { color: currentText() } },
             xAxis: { type: "category", data: yearsRP, axisLabel: { color: "#ccc" } },
             yAxis: { type: "value", axisLabel: { color: "#ccc" } },
             series: [{ type: "line", data: reviewAvg, smooth: true }]
         });
 
-
-        // ============================================================
-        // 4) REVIEW-COUNT TREND
-        // ============================================================
-        const reviewCountChart = echarts.init(document.getElementById("review_count"));
+        // 4) Review-Count-Trend
         const yearsRC = Object.keys(data.review_count_by_year).sort();
         const reviewCounts = yearsRC.map(y => data.review_count_by_year[y]);
-
         reviewCountChart.setOption({
-            backgroundColor: "#111",
-            title: { text: "Durchschnittliche Review-Anzahl pro Jahr", textStyle: { color: "#fff" } },
+            backgroundColor: currentBg(),
+            title: { text: "Average Review Count per Year", textStyle: { color: currentText() } },
             xAxis: { type: "category", data: yearsRC, axisLabel: { color: "#ccc" } },
             yAxis: { type: "value", axisLabel: { color: "#ccc" } },
             series: [{ type: "line", data: reviewCounts, smooth: true }]
         });
 
-
-        // ============================================================
-        // 5) DURCHSCHNITTLICHE GENRE-ANZAHL PRO SPIEL
-        // ============================================================
-        const genreAvgChart = echarts.init(document.getElementById("genre_avg"));
+        // 5) Durchschnittliche Genres pro Spiel pro Jahr
         const yearsGA = Object.keys(data.avg_genres_per_year).sort();
         const avgGenres = yearsGA.map(y => data.avg_genres_per_year[y]);
-
         genreAvgChart.setOption({
-            backgroundColor: "#111",
-            title: { text: "Durchschnittliche Genres pro Spiel pro Jahr", textStyle: { color: "#fff" } },
+            backgroundColor: currentBg(),
+            title: { text: "Average Genres per Game per Year", textStyle: { color: currentText() } },
             xAxis: { type: "category", data: yearsGA, axisLabel: { color: "#ccc" } },
             yAxis: { type: "value", axisLabel: { color: "#ccc" } },
             series: [{ type: "line", data: avgGenres, smooth: true }]
         });
 
+        // 6) Ranking-Chart (Top-Genres pro Jahr)
+        function updateRanking(year) {
+            const entries = Object.entries(data.genre_by_year[year] || {});
+            const sorted = entries.sort((a,b) => b[1] - a[1]).slice(0, 10);
+            rankingChart.setOption({
+                backgroundColor: currentBg(),
+                title: { text: "Top Genres in " + year, textStyle: { color: currentText() } },
+                xAxis: { type: "value", axisLabel: { color: "#ccc" } },
+                yAxis: { type: "category", data: sorted.map(x => x[0]), axisLabel: { color: "#ccc" } },
+                series: [{ type: "bar", data: sorted.map(x => x[1]) }]
+            });
+        }
+        updateRanking(years[years.length - 1]);
 
-        // ============================================================
-        // 6) TAG CLOUD
-        // ============================================================
-        const tagCloud = echarts.init(document.getElementById("tags_cloud"));
+        // 7) Tag-Cloud
         const tagData = Object.entries(data.top_tags).map(([name, value]) => ({ name, value }));
-
         tagCloud.setOption({
-            backgroundColor: "#111",
-            title: { text: "Häufigste Tags (WordCloud)", textStyle: { color: "#fff" } },
+            backgroundColor: currentBg(),
+            title: { text: "Most Common Tags (Word Cloud)", textStyle: { color: currentText() } },
             series: [{
                 type: "wordCloud",
                 shape: "circle",
@@ -158,42 +230,46 @@ fetch("steam_trends.json")
             }]
         });
 
-
-        // ============================================================
-        // 7) TAGS BAR CHART
-        // ============================================================
-        const tagBar = echarts.init(document.getElementById("tags_bar"));
+        // 8) Tags Bar Chart
         const tagNames = Object.keys(data.top_tags);
         const tagValues = Object.values(data.top_tags);
-
         tagBar.setOption({
-            backgroundColor: "#111",
-            title: { text: "Top Tags (Bar Chart)", textStyle: { color: "#fff" } },
+            backgroundColor: currentBg(),
+            title: { text: "Top Tags (Bar Chart)", textStyle: { color: currentText() } },
             xAxis: { type: "category", data: tagNames, axisLabel: { rotate: 45, color: "#ccc" } },
             yAxis: { type: "value", axisLabel: { color: "#ccc" } },
             series: [{ type: "bar", data: tagValues }]
         });
 
-
-        // ============================================================
-        // 8) GENRE HEATMAP (Jahr × Genre)
-        // ============================================================
-        const heatmap = echarts.init(document.getElementById("genre_heatmap"));
-
-        const heatYears = years;
-        const heatGenres = genreList;
-
-        const heatData = [];
-
-        heatYears.forEach((year, yi) => {
-            heatGenres.forEach((genre, gi) => {
-                heatData.push([gi, yi, data.genre_by_year[year][genre] || 0]);
-            });
+        // 9) Genres pro Jahr (Stacked Bar)
+        const seriesStacked = allGenres.map(g => ({
+            name: g,
+            type: "bar",
+            stack: "total",
+            data: years.map(y => (data.genre_by_year[y] && data.genre_by_year[y][g]) || 0)
+        }));
+        genreYearChart.setOption({
+            backgroundColor: currentBg(),
+            title: { text: "Genres per Year (Stacked)", textStyle: { color: currentText() } },
+            tooltip: { trigger: "axis" },
+            legend: { textStyle: { color: currentText() } },
+            xAxis: { type: "category", data: years, axisLabel: { color: "#ccc" } },
+            yAxis: { type: "value", axisLabel: { color: "#ccc" } },
+            series: seriesStacked
         });
 
+        // 10) Genre-Heatmap
+        const heatYears = years;
+        const heatGenres = allGenres;
+        const heatData = [];
+        heatYears.forEach((year, yi) => {
+            heatGenres.forEach((genre, gi) => {
+                heatData.push([gi, yi, (data.genre_by_year[year] && data.genre_by_year[year][genre]) || 0]);
+            });
+        });
         heatmap.setOption({
-            backgroundColor: "#111",
-            title: { text: "Genre Heatmap (Jahr × Genre)", textStyle: { color: "#fff" } },
+            backgroundColor: currentBg(),
+            title: { text: "Genre Heatmap (Year × Genre)", textStyle: { color: currentText() } },
             tooltip: { position: "top" },
             xAxis: {
                 type: "category",
@@ -212,7 +288,7 @@ fetch("steam_trends.json")
                 orient: "horizontal",
                 left: "center",
                 bottom: "5%",
-                textStyle: { color: "#fff" }
+                textStyle: { color: currentText() }
             },
             series: [{
                 name: "Genre Count",
@@ -221,8 +297,163 @@ fetch("steam_trends.json")
             }]
         });
 
+        // 11) Timeline (Genres pro Jahr)
+        timelineChart.setOption({
+            backgroundColor: currentBg(),
+            baseOption: {
+                timeline: {
+                    axisType: "category",
+                    data: years,
+                    autoPlay: true,
+                    playInterval: 1500,
+                    label: { color: currentText() }
+                },
+                xAxis: { type: "category", axisLabel: { color: "#ccc" } },
+                yAxis: { type: "value", axisLabel: { color: "#ccc" } },
+                series: [{ type: "bar" }]
+            },
+            options: years.map(y => {
+                const gNames = Object.keys(data.genre_by_year[y]);
+                const gVals = Object.values(data.genre_by_year[y]);
+                return {
+                    title: { text: "Genres in " + y, textStyle: { color: currentText() } },
+                    xAxis: { data: gNames },
+                    series: [{ data: gVals }]
+                };
+            })
+        });
+
+        // 12) Scatter: Review % vs Review Count
+        const scatterData = yearsRP
+            .filter(y => data.review_count_by_year[y] !== undefined)
+            .map(y => [data.review_percent_by_year[y], data.review_count_by_year[y], y]);
+        scatterChart.setOption({
+            backgroundColor: currentBg(),
+            title: { text: "Review % vs Review Count (Per Year)", textStyle: { color: currentText() } },
+            tooltip: {
+                formatter: p => `Jahr: ${p.data[2]}<br/>Review %: ${p.data[0].toFixed(2)}<br/>Reviews: ${p.data[1].toFixed(0)}`
+            },
+            xAxis: { name: "Review %", axisLabel: { color: "#ccc" } },
+            yAxis: { name: "Review Count", axisLabel: { color: "#ccc" } },
+            series: [{
+                type: "scatter",
+                data: scatterData
+            }]
+        });
+
+        // Interaktionen
+        genreSelect.addEventListener("change", () => {
+            updateGenreTrend(genreSelect.value);
+        });
+
+        yearSelect.addEventListener("change", () => {
+            updateRanking(yearSelect.value);
+        });
+
+        // Theme Toggle
+        function toggleTheme() {
+            dark = !dark;
+            const charts = [
+                genreChart, genreTrendChart, reviewPercentChart, reviewCountChart,
+                genreAvgChart, rankingChart, tagCloud, tagBar,
+                genreYearChart, heatmap, timelineChart, scatterChart
+            ];
+            charts.forEach(c => {
+                const opt = c.getOption();
+                opt.backgroundColor = currentBg();
+                if (opt.title && opt.title[0]) {
+                    opt.title[0].textStyle.color = currentText();
+                }
+                if (opt.legend && opt.legend[0]) {
+                    opt.legend[0].textStyle.color = currentText();
+                }
+                if (opt.visualMap && opt.visualMap[0]) {
+                    opt.visualMap[0].textStyle.color = currentText();
+                }
+                c.setOption(opt, true);
+            });
+        }
+
+        themeToggle.addEventListener("click", toggleTheme);
     });
 </script>
+
+<select id="genreSelect"></select>
+<div id="genrePrediction" class="chart"></div>
+
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+
+    fetch("prediction_output.json")
+    .then(r => r.json())
+    .then(pred => {
+
+        function decodeHtml(str) {
+            const txt = document.createElement("textarea");
+            txt.innerHTML = str;
+            return txt.value;
+        }
+
+        const genres = Object.keys(pred.genre_trends);
+        const select = document.getElementById("genreSelect");
+        const chart = echarts.init(document.getElementById("genrePrediction"));
+
+        console.log("Genres:", genres); // ← Debug: du wirst hier 15 Genres sehen
+
+        // Dropdown füllen
+        genres.forEach(g => {
+            const opt = document.createElement("option");
+            opt.value = g;
+            opt.textContent = decodeHtml(g);
+            select.appendChild(opt);
+        });
+
+        function updateChart(genre) {
+            const g = pred.genre_trends[genre];
+            const futureYears = [2027, 2028, 2029, 2030];
+
+            chart.setOption({
+                title: { text: `Genre Trend Prediction: ${decodeHtml(genre)}` },
+                tooltip: { trigger: "axis" },
+                legend: { data: ["Historical", "Linear", "Polynomial"] },
+                xAxis: {
+                    type: "category",
+                    data: [...g.years, ...futureYears]
+                },
+                yAxis: { type: "value" },
+                series: [
+                    {
+                        name: "Historical",
+                        type: "line",
+                        data: [...g.values, null, null, null, null],
+                        smooth: true
+                    },
+                    {
+                        name: "Linear",
+                        type: "line",
+                        data: Array(g.years.length).fill(null).concat(g.future_linear),
+                        smooth: true
+                    },
+                    {
+                        name: "Polynomial",
+                        type: "line",
+                        data: Array(g.years.length).fill(null).concat(g.future_poly),
+                        smooth: true
+                    }
+                ]
+            });
+        }
+
+        updateChart(genres[0]);
+
+        select.addEventListener("change", () => {
+            updateChart(select.value);
+        });
+    });
+
+});
+</script>
+
 
 </body>
 </html>
