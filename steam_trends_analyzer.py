@@ -47,8 +47,14 @@ def extract_review_count(game):
     return None
 
 # JSON laden
-with open("steam_topsellers_full.json", "r", encoding="utf-8") as f:
+import os, json
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+json_path = os.path.join(BASE_DIR, "steam_topsellers_full.json")
+
+with open(json_path, "r", encoding="utf-8") as f:
     data = json.load(f)
+
 
 genre_total = Counter()
 genre_by_year = defaultdict(Counter)
