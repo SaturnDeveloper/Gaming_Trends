@@ -1,6 +1,7 @@
 import json
 import re
 from collections import defaultdict, Counter
+import os
 
 def strip_html(text):
     return re.sub(r"<.*?>", "", text)
@@ -46,9 +47,8 @@ def extract_review_count(game):
         return int(match.group(1).replace(",", "").replace(".", ""))
     return None
 
-# JSON laden
-import os, json
 
+# JSON laden
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 json_path = os.path.join(BASE_DIR, "steam_topsellers_full.json")
 
@@ -64,6 +64,10 @@ genre_count_per_year = defaultdict(list)
 tag_counter = Counter()
 missing_years = 0
 
+# NEW: Cooccurrence
+tag_cooccurrence = Counter()
+genre_cooccurrence = Counter()
+
 for game in data:
     genres = extract_unique_genres(game)
     year = extract_year(game)
@@ -72,13 +76,26 @@ for game in data:
 
     # Tags
     if "tags" in game and isinstance(game["tags"], list):
-        for t in game["tags"]:
-            if isinstance(t, str):
-                tag_counter[t] += 1
+        tag_list = [t for t in game["tags"] if isinstance(t, str)]
+        for t in tag_list:
+            tag_counter[t] += 1
+
+        # Tag-Cooccurrence
+        for i in range(len(tag_list)):
+            for j in range(i + 1, len(tag_list)):
+                a, b = sorted([tag_list[i], tag_list[j]])
+                tag_cooccurrence[(a, b)] += 1
 
     # Genre total
     for g in genres:
         genre_total[g] += 1
+
+    # Genre-Cooccurrence
+    genre_list = list(genres)
+    for i in range(len(genre_list)):
+        for j in range(i + 1, len(genre_list)):
+            a, b = sorted([genre_list[i], genre_list[j]])
+            genre_cooccurrence[(a, b)] += 1
 
     # Genre per year
     if year:
@@ -94,6 +111,21 @@ for game in data:
     if year and review_count:
         review_count_by_year[year].append(review_count)
 
+
+# GRAPH STRUCTURES
+tag_nodes = [{"id": tag, "value": count} for tag, count in tag_counter.items()]
+tag_links = [
+    {"source": a, "target": b, "value": count}
+    for (a, b), count in tag_cooccurrence.items()
+]
+
+genre_nodes = [{"id": genre, "value": count} for genre, count in genre_total.items()]
+genre_links = [
+    {"source": a, "target": b, "value": count}
+    for (a, b), count in genre_cooccurrence.items()
+]
+
+
 # JSON-Struktur vorbereiten
 output = {
     "genre_total": dict(genre_total),
@@ -108,7 +140,17 @@ output = {
     "avg_genres_per_year": {
         year: sum(vals) / len(vals) for year, vals in genre_count_per_year.items()
     },
-    "missing_years": missing_years
+    "missing_years": missing_years,
+
+    # NEW: Graphs
+    "tag_graph": {
+        "nodes": tag_nodes,
+        "links": tag_links
+    },
+    "genre_graph": {
+        "nodes": genre_nodes,
+        "links": genre_links
+    }
 }
 
 # JSON speichern

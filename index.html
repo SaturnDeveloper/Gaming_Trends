@@ -81,6 +81,11 @@
     <div class="half"><div id="tags_bar" class="chart"></div></div>
 </div>
 
+<div class="row">
+    <div class="half"><div id="genre_network" class="chart" style="height:480px;"></div></div>
+    <div class="half"><div id="tag_network" class="chart" style="height:480px;"></div></div>
+</div>
+
 <div id="genre_years" class="chart"></div>
 <div id="genre_heatmap" class="chart"></div>
 <div id="timeline" class="chart"></div>
@@ -91,6 +96,12 @@ fetch("steam_trends.json")
     .then(r => r.json())
     .then(data => {
         console.log("JSON geladen:", data);
+
+        function decodeHtml(str) {
+            const txt = document.createElement("textarea");
+            txt.innerHTML = str;
+            return txt.value;
+        }
 
         // Basisdaten
         const years = Object.keys(data.genre_by_year).sort();
@@ -128,6 +139,8 @@ fetch("steam_trends.json")
         const rankingChart       = echarts.init(document.getElementById("ranking"));
         const tagCloud           = echarts.init(document.getElementById("tags_cloud"));
         const tagBar             = echarts.init(document.getElementById("tags_bar"));
+        const genreNetworkChart  = echarts.init(document.getElementById("genre_network"));
+        const tagNetworkChart    = echarts.init(document.getElementById("tag_network"));
         const genreYearChart     = echarts.init(document.getElementById("genre_years"));
         const heatmap            = echarts.init(document.getElementById("genre_heatmap"));
         const timelineChart      = echarts.init(document.getElementById("timeline"));
@@ -240,6 +253,89 @@ fetch("steam_trends.json")
             yAxis: { type: "value", axisLabel: { color: "#ccc" } },
             series: [{ type: "bar", data: tagValues }]
         });
+
+        // 8b) Genre-Netzwerk (Graph: welche Genres treten zusammen auf)
+        const genreGraphNodes = data.genre_graph.nodes.map(n => ({
+            name: decodeHtml(n.id),
+            value: n.value,
+            symbolSize: Math.sqrt(n.value) * 1.6 + 10
+        }));
+        const genreGraphLinks = data.genre_graph.links.map(l => ({
+            source: decodeHtml(l.source),
+            target: decodeHtml(l.target),
+            value: l.value,
+            lineStyle: { width: Math.max(0.5, l.value / 35) }
+        }));
+        function renderGenreNetwork() {
+            genreNetworkChart.setOption({
+                backgroundColor: currentBg(),
+                title: { text: "Genre Relationships (Network)", textStyle: { color: currentText() } },
+                tooltip: {
+                    formatter: p => p.dataType === "edge"
+                        ? `${p.data.source} ↔ ${p.data.target}: ${p.data.value}`
+                        : `${p.data.name}: ${p.data.value}`
+                },
+                series: [{
+                    type: "graph",
+                    layout: "force",
+                    roam: true,
+                    draggable: true,
+                    label: { show: true, color: currentText(), fontSize: 11 },
+                    force: { repulsion: 180, edgeLength: [30, 130], gravity: 0.1 },
+                    lineStyle: { color: "source", curveness: 0.1, opacity: 0.5 },
+                    emphasis: { focus: "adjacency", lineStyle: { width: 4 } },
+                    itemStyle: { color: "#5470c6" },
+                    data: genreGraphNodes,
+                    links: genreGraphLinks
+                }]
+            }, true);
+        }
+        renderGenreNetwork();
+
+        // 8c) Tag-Netzwerk (Graph: welche Tags treten zusammen auf, Top 50 Tags / Top 300 Verbindungen)
+        const topTagSet = new Set(Object.keys(data.top_tags));
+        const tagGraphNodesFiltered = data.tag_graph.nodes.filter(n => topTagSet.has(n.id));
+        const tagGraphLinksFiltered = data.tag_graph.links
+            .filter(l => topTagSet.has(l.source) && topTagSet.has(l.target))
+            .sort((a, b) => b.value - a.value)
+            .slice(0, 300);
+
+        const tagGraphNodes = tagGraphNodesFiltered.map(n => ({
+            name: decodeHtml(n.id),
+            value: n.value,
+            symbolSize: Math.sqrt(n.value) * 1.3 + 7
+        }));
+        const tagGraphLinks = tagGraphLinksFiltered.map(l => ({
+            source: decodeHtml(l.source),
+            target: decodeHtml(l.target),
+            value: l.value,
+            lineStyle: { width: Math.max(0.3, l.value / 60) }
+        }));
+        function renderTagNetwork() {
+            tagNetworkChart.setOption({
+                backgroundColor: currentBg(),
+                title: { text: "Tag Relationships (Top 50, Network)", textStyle: { color: currentText() } },
+                tooltip: {
+                    formatter: p => p.dataType === "edge"
+                        ? `${p.data.source} ↔ ${p.data.target}: ${p.data.value}`
+                        : `${p.data.name}: ${p.data.value}`
+                },
+                series: [{
+                    type: "graph",
+                    layout: "force",
+                    roam: true,
+                    draggable: true,
+                    label: { show: true, color: currentText(), fontSize: 10 },
+                    force: { repulsion: 200, edgeLength: [20, 110], gravity: 0.04 },
+                    lineStyle: { color: "source", curveness: 0.1, opacity: 0.25 },
+                    emphasis: { focus: "adjacency", lineStyle: { width: 4 } },
+                    itemStyle: { color: "#91cc75" },
+                    data: tagGraphNodes,
+                    links: tagGraphLinks
+                }]
+            }, true);
+        }
+        renderTagNetwork();
 
         // 9) Genres pro Jahr (Stacked Bar)
         const seriesStacked = allGenres.map(g => ({
@@ -372,6 +468,9 @@ fetch("steam_trends.json")
                 }
                 c.setOption(opt, true);
             });
+            // Netzwerk-Graphen neu rendern (Force-Layout + Label-Farbe)
+            renderGenreNetwork();
+            renderTagNetwork();
         }
 
         themeToggle.addEventListener("click", toggleTheme);
